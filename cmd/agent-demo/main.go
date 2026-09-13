@@ -69,7 +69,26 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	result, err := a.Run(ctx, []*msg.Msg{msg.NewText("user", msg.RoleUser, "请调用 add 计算 12 + 30，然后告诉我结果。")})
+	result, err := a.RunWithRequest(ctx, agent.RunRequest{
+		Messages: []*msg.Msg{msg.NewText("user", msg.RoleUser, "请调用 add 计算 12 + 30，然后告诉我结果。")},
+		Hook: func(e agent.Event) error {
+			switch e.Type {
+			case agent.RunStarted:
+				fmt.Println("运行开始")
+			case agent.ModelStarted:
+				fmt.Printf("第 %d 次模型调用开始\n", e.Step)
+			case agent.ModelFinished:
+				fmt.Printf("第 %d 次模型调用结束：%s\n", e.Step, e.Status)
+			case agent.ToolStarted:
+				fmt.Printf("工具 %s [%s] 开始\n", e.ToolName, e.ToolCallID)
+			case agent.ToolFinished:
+				fmt.Printf("工具 %s [%s] 结束：%s\n", e.ToolName, e.ToolCallID, e.Status)
+			case agent.RunFinished:
+				fmt.Printf("运行结束：%s\n", e.StopReason)
+			}
+			return nil
+		},
+	})
 	fmt.Printf("停止原因：%s；模型调用次数：%d\n", result.StopReason, result.Steps)
 	for _, message := range result.History {
 		for _, b := range message.Blocks {

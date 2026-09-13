@@ -47,3 +47,7 @@ go run ./cmd/agent-demo
 ```
 
 脚本模型与本地工具完成两轮闭环，包含模型调用次数上限、停止原因和取消传播。使用方式及可选真实模型入口见 [Agent 文档](agent/README.md)。
+
+## Agent 执行进度
+
+`agent-demo` 现在实时打印模型和每个工具的开始、结束与运行终态。应用可通过 `RunWithRequest` 的 Hook 接收只读事件；原 Run 接口继续可用。详见 [进度接口说明](agent/README.md#执行进度)。

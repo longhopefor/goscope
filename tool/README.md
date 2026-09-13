@@ -57,3 +57,9 @@ go vet ./...
 ```
 
 Demo 手动构造三次调用，执行真正的本地加法函数，并验证调用与结果关系，不需要密钥。测试还覆盖合法零值、缺失/未知字段、嵌套约束、大整数、取消后不继续派发、panic 转换、输出隔离，以及结果经现有 Formatter 编码。
+
+## 单项进度观察
+
+`ExecuteWithObserver(ctx, request, func(Progress))` 在每个调用调度前和完成后同步通知。原 Execute 保持兼容。Progress 仅包含 CallID、Name、Finished 和 Status，无法修改工具参数或结果。Status 为 started、succeeded、failed 或 canceled；未知工具也发出 started/failed。
+
+观察者 panic 被隔离并继续执行；直接使用此底层 API 不记录观察者异常。需要失败计数时使用 Agent 的 Hook。观察者必须及时返回，context 不会强制终止阻塞回调。开始通知之后会再次检查取消，观察者取消运行可以阻止函数执行；完成通知之后也检查取消，避免启动下一项。取消不回滚已经发生的副作用。

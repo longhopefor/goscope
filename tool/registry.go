@@ -54,6 +54,11 @@ func (r *Registry) Definitions() []model.Tool {
 // Execute 验证整条 assistant 消息后串行执行。普通失败变为工具结果；取消返回 error。
 // 取消可能发生在已有副作用之后，返回 error 不代表之前的调用未执行，不可盲目重试整批。
 func (r *Registry) Execute(ctx context.Context, request *msg.Msg) (*msg.Msg, error) {
+	return r.ExecuteWithObserver(ctx, request, nil)
+}
+
+// ExecuteWithObserver 发出每项调用的值类型进度，观察者不能修改调用内容。
+func (r *Registry) ExecuteWithObserver(ctx context.Context, request *msg.Msg, observer func(Progress)) (*msg.Msg, error) {
 	if r == nil || ctx == nil {
 		return nil, fmt.Errorf("registry and context are required")
 	}
@@ -76,6 +81,14 @@ func (r *Registry) Execute(ctx context.Context, request *msg.Msg) (*msg.Msg, err
 			return nil, err
 		}
 		call := b.ToolUse
+		report := func(finished bool, status string) {
+			reportProgress(observer, Progress{CallID: call.ID, Name: call.Name, Finished: finished, Status: status})
+		}
+		report(false, "started")
+		if err := ctx.Err(); err != nil {
+			report(true, "canceled")
+			return nil, err
+		}
 		t, ok := r.tools[call.Name]
 		var output []msg.Block
 		var callErr error
@@ -85,9 +98,11 @@ func (r *Registry) Execute(ctx context.Context, request *msg.Msg) (*msg.Msg, err
 			output, callErr = invoke(ctx, t, call.Input)
 		}
 		if ctx.Err() != nil {
+			report(true, "canceled")
 			return nil, ctx.Err()
 		}
 		if cancellation(callErr) {
+			report(true, "canceled")
 			return nil, callErr
 		}
 		block := msg.ToolResult(call.ID, output...)
@@ -104,6 +119,14 @@ func (r *Registry) Execute(ctx context.Context, request *msg.Msg) (*msg.Msg, err
 			block.ToolResult.IsError = true
 		}
 		result.Add(block)
+		status := "succeeded"
+		if callErr != nil {
+			status = "failed"
+		}
+		report(true, status)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
 	if len(result.Blocks) == 0 {
 		return nil, fmt.Errorf("no tool calls")

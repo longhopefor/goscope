@@ -44,3 +44,29 @@ go run ./cmd/agent-demo -real
 ```
 
 使用现有 Chat Completions 适配器和同一个 Run 接口，运行超时 30 秒。模型可能不选择工具，因此须检查实际结果；此入口本次未实测。不在命令行或仓库保存密钥。
+
+## 执行进度
+
+原 `Run(ctx, history)` 保持兼容。需要进度时，使用每次运行独立的请求：
+
+```go
+result, err := a.RunWithRequest(ctx, agent.RunRequest{
+    Messages: history,
+    Hook: func(e agent.Event) error {
+        fmt.Printf("%s #%d %s step=%d tool=%s status=%s stop=%s\n",
+            e.RunID, e.Sequence, e.Type, e.Step, e.ToolName, e.Status, e.StopReason)
+        return nil
+    },
+})
+```
+
+- 顺序为 run_started → model_started/model_finished → 可选的 tool_started/tool_finished → 后续模型轮次 → run_finished。每项工具均有通知，未知工具也会产生 started/failed。
+- 在正常返回与错误返回路径中，run_finished 恰好一次，StopReason 与 Result 一致；无效输入、预先取消也有运行开始与结束通知。
+- Event 的 RunID 对应 Result.RunID；Sequence 从 1 连续递增，Time 是发出时间；Step 为模型尝试的轮次。RunFinished.Step 为实际启动的 Generate 次数，与 Result.Steps 一致。
+- started 在实际执行前发出。Hook 如果通过捕获的 cancel 函数取消运行，该尝试会产生 canceled 结束事件，实际函数可以未执行；因此取消时最后一个模型尝试编号可能比 Result.Steps 大 1。
+- model_finished 的 succeeded 表示响应已通过 Agent 消息验证；工具失败不影响模型调用本身的成功状态。tool_finished 的 failed 表示失败工具结果，canceled 表示取消；取消不证明工具没有副作用。
+- Hook 同步、串行、在执行 goroutine 内调用。慢 Hook 会阻塞进度；不响应返回的 Hook 无法被 context 强制终止。不额外创建队列或 goroutine。
+- Hook 返回错误或 panic 都只增加 Result.HookFailures，不改变主任务结果，后续通知继续发送。包括最终通知的失败也会计数。不保留原始错误文本，避免进度里泄露敏感内容。
+- Event 仅有值字段，不携带消息、参数、结果或错误对象，修改事件不会影响历史。Hook 捕获的其他共享对象不在隔离保证范围内；并发 Run 的 Hook 需要自行保护共享数据。
+- run_finished 是结果确定后的通知，在这个 Hook 中取消 context 不会追溯修改已确定的终态。
+- Demo 默认显示这些事件。这是步骤进度，不是模型逐字流式输出；没有百分比、Hooks 持久化或断点恢复。

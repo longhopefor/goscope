@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/longhopefor/goscope/model"
 	"github.com/longhopefor/goscope/msg"
@@ -26,10 +27,12 @@ var ErrMaxSteps = errors.New("agent reached maximum model steps")
 // Result 即使失败也返回；History 是诊断快照，取消时可能有未解决调用。
 // Steps 计算已启动的 Generate 次数，Final 仅在正常完成时赋值。
 type Result struct {
-	History    []*msg.Msg
-	Final      *msg.Msg
-	Steps      int
-	StopReason StopReason
+	History      []*msg.Msg
+	Final        *msg.Msg
+	Steps        int
+	StopReason   StopReason
+	RunID        string
+	HookFailures int
 }
 
 type ReAct struct {
@@ -66,14 +69,43 @@ func clone(messages []*msg.Msg) ([]*msg.Msg, error) {
 // Run 使用独立历史。模型请求与返回值均复制；调用方不能并发修改传入消息。
 // 工具取消不回滚副作用，也不自动重试。依赖对象自身须支持并发，才可并发 Run。
 func (a *ReAct) Run(ctx context.Context, input []*msg.Msg) (*Result, error) {
-	r := &Result{StopReason: Failed}
+	return a.RunWithRequest(ctx, RunRequest{Messages: input})
+}
+
+// RunWithRequest 为本次运行设置进度 Hook；原 Run 接口继续可用。
+func (a *ReAct) RunWithRequest(ctx context.Context, req RunRequest) (*Result, error) {
+	input := req.Messages
+	r := &Result{StopReason: Failed, RunID: msg.NewID()}
+	sequence := 0
+	emit := func(e Event) {
+		sequence++
+		e.RunID, e.Sequence, e.Time = r.RunID, sequence, time.Now()
+		if e.Step == 0 {
+			e.Step = r.Steps
+		}
+		if notify(req.Hook, e) != nil {
+			r.HookFailures++
+		}
+	}
+	emit(Event{Type: RunStarted, Status: "started"})
+	defer func() { emit(Event{Type: RunFinished, StopReason: r.StopReason}) }()
+	modelActive := false
+	modelStep := 0
 	stop := func(err error) (*Result, error) {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			r.StopReason = Canceled
 		}
+		if modelActive {
+			status := "failed"
+			if r.StopReason == Canceled {
+				status = "canceled"
+			}
+			emit(Event{Type: ModelFinished, Status: status, Step: modelStep})
+			modelActive = false
+		}
 		return r, err
 	}
-	if a == nil || ctx == nil {
+	if a == nil || ctx == nil || a.model == nil || a.tools == nil || a.maxSteps <= 0 {
 		return stop(fmt.Errorf("agent and context are required"))
 	}
 	if err := ctx.Err(); err != nil {
@@ -98,6 +130,14 @@ func (a *ReAct) Run(ctx context.Context, input []*msg.Msg) (*Result, error) {
 		if copyErr != nil {
 			return stop(copyErr)
 		}
+		emitStep := r.Steps + 1
+		// 在启动通知之后再次检查取消；Step 标记本次尝试，Steps 只计实际调用。
+		emit(Event{Type: ModelStarted, Status: "started", Step: emitStep})
+		modelActive = true
+		modelStep = emitStep
+		if err = ctx.Err(); err != nil {
+			return stop(err)
+		}
 		r.Steps++
 		response, generateErr := a.model.Generate(ctx, model.Request{Messages: request, Tools: a.tools.Definitions()})
 		if err = ctx.Err(); err != nil {
@@ -121,6 +161,8 @@ func (a *ReAct) Run(ctx context.Context, input []*msg.Msg) (*Result, error) {
 			return stop(err)
 		}
 		r.History = candidate
+		emit(Event{Type: ModelFinished, Status: "succeeded"})
+		modelActive = false
 		hasTools := len(assistant.BlocksOfType(msg.BlockToolUse)) > 0
 		if !hasTools {
 			if err = ctx.Err(); err != nil {
@@ -136,7 +178,13 @@ func (a *ReAct) Run(ctx context.Context, input []*msg.Msg) (*Result, error) {
 		if err = ctx.Err(); err != nil {
 			return stop(err)
 		}
-		result, executeErr := a.tools.Execute(ctx, assistant)
+		result, executeErr := a.tools.ExecuteWithObserver(ctx, assistant, func(p tool.Progress) {
+			eventType := ToolStarted
+			if p.Finished {
+				eventType = ToolFinished
+			}
+			emit(Event{Type: eventType, ToolCallID: p.CallID, ToolName: p.Name, Status: p.Status})
+		})
 		if executeErr != nil {
 			return stop(fmt.Errorf("tools: %w", executeErr))
 		}
