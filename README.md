@@ -31,3 +31,11 @@ go run ./cmd/model-demo -stream
 ```
 
 默认运行本地模拟，不需要密钥。真实调用和能力边界见 [Model 文档](model/README.md)。
+
+## 第 3 篇：Tool
+
+```sh
+go run ./cmd/tool-demo
+```
+
+工具定义、受限 Schema 生成、参数校验、只读注册表和串行执行已实现。Demo 在本机执行加法，调用消息为手动构造。用法与限制见 [Tool 文档](tool/README.md)。
