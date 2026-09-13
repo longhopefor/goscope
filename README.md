@@ -39,3 +39,11 @@ go run ./cmd/tool-demo
 ```
 
 工具定义、受限 Schema 生成、参数校验、只读注册表和串行执行已实现。Demo 在本机执行加法，调用消息为手动构造。用法与限制见 [Tool 文档](tool/README.md)。
+
+## 第 4 篇：ReAct
+
+```sh
+go run ./cmd/agent-demo
+```
+
+脚本模型与本地工具完成两轮闭环，包含模型调用次数上限、停止原因和取消传播。使用方式及可选真实模型入口见 [Agent 文档](agent/README.md)。
