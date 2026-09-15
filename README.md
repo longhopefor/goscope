@@ -55,3 +55,7 @@ go run ./cmd/agent-demo
 ### 取消与部分执行示例
 
 运行 `go run ./cmd/cancel-demo`：A 成功，B 写入临时文件后超时并标为 unknown，C 保持 not_started。示例结束清理临时文件。支持运行、模型、单次工具三级合作式超时；`Result.ToolBatches` 保留逐项状态，旧工具执行接口继续兼容。当前记录仅在内存中，不支持自动恢复或安全自动重试。
+
+### 统一 Runner
+
+`agent.NewRunner(strategy)` 接受实现 `agent.Agent` 的执行策略，统一运行 ID、总超时、事件和错误收尾。现有 ReAct.Run 仍可用。执行 `go run ./cmd/runner-demo` 对照两种策略的运行过程；示例无需 API key。

@@ -75,22 +75,21 @@ func (a *ReAct) Run(ctx context.Context, input []*msg.Msg) (*Result, error) {
 
 // RunWithRequest 为本次运行设置进度 Hook；原 Run 接口继续可用。
 func (a *ReAct) RunWithRequest(ctx context.Context, req RunRequest) (*Result, error) {
-	started := time.Now()
+	return (&Runner{agent: a}).Run(ctx, req)
+}
+
+// Execute implements the strategy contract. Applications normally use Runner.
+func (a *ReAct) Execute(ctx context.Context, req ExecutionRequest) (*Result, error) {
 	input := req.Messages
-	r := &Result{StopReason: Failed, RunID: msg.NewID()}
-	sequence := 0
+	r := &Result{StopReason: Failed}
 	emit := func(e Event) {
-		sequence++
-		e.RunID, e.Sequence, e.Time = r.RunID, sequence, time.Now()
 		if e.Step == 0 {
 			e.Step = r.Steps
 		}
-		if notify(req.Hook, e) != nil {
-			r.HookFailures++
+		if req.Emit != nil {
+			req.Emit(e)
 		}
 	}
-	emit(Event{Type: RunStarted, Status: "started"})
-	defer func() { emit(Event{Type: RunFinished, StopReason: r.StopReason}) }()
 	modelActive := false
 	modelStep := 0
 	stop := func(err error) (*Result, error) {
@@ -110,13 +109,8 @@ func (a *ReAct) RunWithRequest(ctx context.Context, req RunRequest) (*Result, er
 	if a == nil || ctx == nil || a.model == nil || a.tools == nil || a.maxSteps <= 0 {
 		return stop(fmt.Errorf("agent and context are required"))
 	}
-	if req.Timeouts.Run < 0 || req.Timeouts.Model < 0 || req.Timeouts.Tool < 0 {
+	if req.ModelTimeout < 0 || req.ToolTimeout < 0 {
 		return stop(fmt.Errorf("timeouts must be nonnegative"))
-	}
-	if req.Timeouts.Run > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, started.Add(req.Timeouts.Run))
-		defer cancel()
 	}
 	if err := ctx.Err(); err != nil {
 		return stop(err)
@@ -149,7 +143,7 @@ func (a *ReAct) RunWithRequest(ctx context.Context, req RunRequest) (*Result, er
 			return stop(err)
 		}
 		r.Steps++
-		response, generateErr := a.generate(ctx, model.Request{Messages: request, Tools: a.tools.Definitions()}, req.Timeouts.Model)
+		response, generateErr := a.generate(ctx, model.Request{Messages: request, Tools: a.tools.Definitions()}, req.ModelTimeout)
 		if err = ctx.Err(); err != nil {
 			return stop(err)
 		}
@@ -188,7 +182,7 @@ func (a *ReAct) RunWithRequest(ctx context.Context, req RunRequest) (*Result, er
 		if err = ctx.Err(); err != nil {
 			return stop(err)
 		}
-		result, executeErr := a.tools.ExecuteBatch(ctx, assistant, tool.BatchOptions{Timeout: req.Timeouts.Tool, Observer: func(p tool.Progress) {
+		result, executeErr := a.tools.ExecuteBatch(ctx, assistant, tool.BatchOptions{Timeout: req.ToolTimeout, Observer: func(p tool.Progress) {
 			eventType := ToolStarted
 			if p.Finished {
 				eventType = ToolFinished

@@ -78,3 +78,19 @@ result, err := a.RunWithRequest(ctx, agent.RunRequest{
 失败时读取 `Result.ToolBatches` 获取逐项执行状态；History 保留已确认的工具输出，但可能仍有未解决调用，不能直接继续 Run。DeadlineExceeded 沿用 Canceled 停止原因，具体原因通过 errors.Is 判断。本次未加入自动重试或持久恢复。
 
 无需 API key 的验证：`go run ./cmd/cancel-demo`。
+
+### Runner：统一运行入口
+
+```go
+runner, err := agent.NewRunner(reactAgent)
+if err != nil { return err }
+result, err := runner.Run(ctx, agent.RunRequest{Messages: input, Hook: hook})
+```
+
+`agent.Agent` 实现 `Execute(context.Context, agent.ExecutionRequest) (*agent.Result, error)`，无需负责生成 RunID 或发送运行开始/结束事件。ExecutionRequest 提供消息、ModelTimeout、ToolTimeout 和同步 Emit。模型/工具事件由策略发出，运行级事件及元数据由 Runner 管理。ReAct.Run/RunWithRequest 已委托同一个 Runner。
+
+Runner 总是返回非 nil Result；策略 nil,error 会得到失败结果，nil,nil 为契约错误；取消时保留策略已返回的部分结果，errors.Is 可查原因。同步 panic 返回通用错误，但不能取回策略未返回的局部结果，也不能捕获其他 goroutine 的 panic。策略返回后不得继续修改结果或留下运行中的工作。
+
+同次运行 Hook 串行调用，不要在 Hook 中递归 Emit 或等待依赖当前 Hook 返回的工作。跨运行共用 Hook 的共享状态需自行同步。Runner 可复用，但 Agent 和其依赖也必须支持并发。当前无后台运行、持久恢复和强制超时。
+
+运行 `go run ./cmd/runner-demo` 对照直接返回策略与 ReAct；再运行 `go run ./cmd/cancel-demo` 验证逐项取消结果。
