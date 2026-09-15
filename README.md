@@ -63,3 +63,7 @@ go run ./cmd/agent-demo
 ### 端到端流式输出
 
 运行 `go run ./cmd/stream-demo` 查看“内容分片 → 工具执行 → 第二轮回答”。Runner.Stream 提供有界内容队列、提前关闭和完整结果读取；工具参数完整校验后才执行。详见 [流式接口与资源释放](agent/STREAMING.md)。
+
+### Anthropic Messages API
+
+`model/anthropic` 支持普通与流式 Messages 调用、文本/图片和客户端工具循环，复用现有 ReAct 与 Runner。运行 `go run ./cmd/anthropic-demo -stream` 使用离线协议 fixture 验证；真实调用需显式 `-real`。配置与能力边界见 [Anthropic 适配说明](model/anthropic/README.md)。
