@@ -59,6 +59,10 @@ func (r *Runner) Stream(ctx context.Context, req RunRequest) (*Stream, error) {
 		return nil, err
 	}
 	req.Messages = messages
+	if req.Session != nil {
+		binding := *req.Session
+		req.Session = &binding
+	}
 	child, cancel := context.WithCancel(ctx)
 	s := &Stream{events: make(chan ContentEvent, 16), done: make(chan struct{}), cancel: cancel}
 	go func() {

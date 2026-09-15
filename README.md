@@ -32,6 +32,10 @@ go run ./cmd/model-demo -stream
 
 默认运行本地模拟，不需要密钥。真实调用和能力边界见 [Model 文档](model/README.md)。
 
+## 后续开发计划
+
+[开发计划](docs/development-plan.md) 已根据三框架调研更新。第 1—5 篇代码已完成；下一步实现取消时的逐项工具结果与资源释放，再推进流式、第二模型协议、审批恢复和组合能力。
+
 ## 第 3 篇：Tool
 
 ```sh
@@ -67,3 +71,7 @@ go run ./cmd/agent-demo
 ### Anthropic Messages API
 
 `model/anthropic` 支持普通与流式 Messages 调用、文本/图片和客户端工具循环，复用现有 ReAct 与 Runner。运行 `go run ./cmd/anthropic-demo -stream` 使用离线协议 fixture 验证；真实调用需显式 `-real`。配置与能力边界见 [Anthropic 适配说明](model/anthropic/README.md)。
+
+### 会话与版本化存储
+
+`session` 提供内存与 SQLite 后端，Runner 会话入口支持保存历史、重启后继续聊天、版本冲突检测和取消后的限时诊断保存。运行 `go run ./cmd/session-demo -db /tmp/goscope-session-demo.db -message hello`，再次运行同一数据库即可读取历史。SQLite 后端需要 CGO 与 C 编译器；详见 [会话文档](session/README.md)。

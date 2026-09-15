@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/longhopefor/goscope/msg"
+	"github.com/longhopefor/goscope/session"
 )
 
 // Agent executes a strategy, not the run lifecycle. Implementations must honor
@@ -57,6 +58,14 @@ func (runner *Runner) Run(ctx context.Context, req RunRequest) (result *Result, 
 
 func (runner *Runner) run(ctx context.Context, req RunRequest, content func(context.Context, ContentEvent) error) (result *Result, err error) {
 	started := time.Now()
+	var loaded *session.Snapshot
+	var sessionInput []*msg.Msg
+	executionStarted := false
+	saveBase := ctx
+	if req.Session != nil {
+		binding := *req.Session
+		req.Session = &binding
+	}
 	runID := msg.NewID()
 	result = &Result{StopReason: Failed}
 	var mu sync.Mutex
@@ -93,6 +102,22 @@ func (runner *Runner) run(ctx context.Context, req RunRequest, content func(cont
 		if err != nil {
 			result.Final = nil
 		}
+		result.RunID = runID
+		if req.Session != nil {
+			result.SessionSaved = false
+			result.SessionID = req.Session.Key.ID
+			if loaded != nil {
+				result.SessionVersion = loaded.Version
+			}
+			if loaded != nil && executionStarted {
+				if saveErr := commitSession(saveBase, req.Session, loaded, sessionInput, result, err); saveErr != nil {
+					err = errors.Join(err, saveErr)
+					if result.StopReason == Completed {
+						result.StopReason = Failed
+					}
+				}
+			}
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		closed = true
@@ -122,6 +147,17 @@ func (runner *Runner) run(ctx context.Context, req RunRequest, content func(cont
 	if copyErr != nil {
 		return result, copyErr
 	}
+	if req.Session != nil {
+		var loadErr error
+		loaded, messages, loadErr = loadSession(ctx, req.Session, messages)
+		if loadErr != nil {
+			return result, loadErr
+		}
+		sessionInput, loadErr = clone(messages)
+		if loadErr != nil {
+			return result, loadErr
+		}
+	}
 	if err = msg.ValidateConversation(messages, true); err != nil {
 		return result, err
 	}
@@ -140,6 +176,7 @@ func (runner *Runner) run(ctx context.Context, req RunRequest, content func(cont
 		publish(e)
 	}
 	execution := ExecutionRequest{Messages: messages, ModelTimeout: req.Timeouts.Model, ToolTimeout: req.Timeouts.Tool, Emit: emit}
+	executionStarted = true
 	if content == nil {
 		result, err = runner.agent.Execute(ctx, execution)
 	} else {

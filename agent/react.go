@@ -27,13 +27,16 @@ var ErrMaxSteps = errors.New("agent reached maximum model steps")
 // Result 即使失败也返回；History 是诊断快照，取消时可能有未解决调用。
 // Steps 计算已启动的 Generate/Stream 次数，Final 仅在正常完成时赋值。
 type Result struct {
-	History      []*msg.Msg
-	Final        *msg.Msg
-	Steps        int
-	StopReason   StopReason
-	RunID        string
-	HookFailures int
-	ToolBatches  []*tool.BatchResult
+	History        []*msg.Msg
+	Final          *msg.Msg
+	Steps          int
+	StopReason     StopReason
+	RunID          string
+	HookFailures   int
+	ToolBatches    []*tool.BatchResult
+	SessionID      string
+	SessionVersion int64
+	SessionSaved   bool
 }
 
 type ReAct struct {

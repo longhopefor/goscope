@@ -40,6 +40,7 @@ type Hook func(Event) error
 type Timeouts struct{ Run, Model, Tool time.Duration }
 
 type RunRequest struct {
+	Session  *SessionRequest
 	Timeouts Timeouts
 	Messages []*msg.Msg
 	Hook     Hook

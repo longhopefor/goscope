@@ -100,3 +100,9 @@ Runner 总是返回非 nil Result；策略 nil,error 会得到失败结果，nil
 `Runner.Stream(ctx, RunRequest)` 返回单消费者 Stream，逐项 `Recv()`，读到结束后 `Wait()` 取得完整 Result。提前停止读取务必 `Close()`；队列满时不要直接 Wait。内容与 Hook 进度分开，工具只在完整模型流校验成功后执行。
 
 示例：`go run ./cmd/stream-demo`。具体所有权、超时、关闭及 OpenAI 参数缓冲行为见 [流式调用文档](STREAMING.md)。
+
+### 会话运行
+
+`Runner.RunSession` / `StreamSession` 接收 Store、Namespace + SessionID 和新增 user 消息，自动加载历史并在运行结束前按旧版本保存。返回值检查 SessionSaved 和 error；写入冲突不自动重跑。失败运行保存为 Blocked，后续直接续跑被拒绝。
+
+使用方式、SQLite 构建依赖及“版本检查不等于工具执行去重”的边界见 [会话与版本化存储](../session/README.md)。
