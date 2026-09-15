@@ -94,3 +94,9 @@ Runner 总是返回非 nil Result；策略 nil,error 会得到失败结果，nil
 同次运行 Hook 串行调用，不要在 Hook 中递归 Emit 或等待依赖当前 Hook 返回的工作。跨运行共用 Hook 的共享状态需自行同步。Runner 可复用，但 Agent 和其依赖也必须支持并发。当前无后台运行、持久恢复和强制超时。
 
 运行 `go run ./cmd/runner-demo` 对照直接返回策略与 ReAct；再运行 `go run ./cmd/cancel-demo` 验证逐项取消结果。
+
+### 端到端流式
+
+`Runner.Stream(ctx, RunRequest)` 返回单消费者 Stream，逐项 `Recv()`，读到结束后 `Wait()` 取得完整 Result。提前停止读取务必 `Close()`；队列满时不要直接 Wait。内容与 Hook 进度分开，工具只在完整模型流校验成功后执行。
+
+示例：`go run ./cmd/stream-demo`。具体所有权、超时、关闭及 OpenAI 参数缓冲行为见 [流式调用文档](STREAMING.md)。

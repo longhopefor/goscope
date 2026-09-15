@@ -52,6 +52,10 @@ func nilAgent(a Agent) bool {
 // Run always returns a result. Hook failures cannot change execution outcomes.
 // Cancellation is cooperative; there is no background timeout goroutine.
 func (runner *Runner) Run(ctx context.Context, req RunRequest) (result *Result, err error) {
+	return runner.run(ctx, req, nil)
+}
+
+func (runner *Runner) run(ctx context.Context, req RunRequest, content func(context.Context, ContentEvent) error) (result *Result, err error) {
 	started := time.Now()
 	runID := msg.NewID()
 	result = &Result{StopReason: Failed}
@@ -135,7 +139,25 @@ func (runner *Runner) Run(ctx context.Context, req RunRequest) (result *Result, 
 		e.StopReason = ""
 		publish(e)
 	}
-	result, err = runner.agent.Execute(ctx, ExecutionRequest{Messages: messages, ModelTimeout: req.Timeouts.Model, ToolTimeout: req.Timeouts.Tool, Emit: emit})
+	execution := ExecutionRequest{Messages: messages, ModelTimeout: req.Timeouts.Model, ToolTimeout: req.Timeouts.Tool, Emit: emit}
+	if content == nil {
+		result, err = runner.agent.Execute(ctx, execution)
+	} else {
+		strategy, ok := runner.agent.(StreamingAgent)
+		if !ok {
+			return result, ErrStreamUnsupported
+		}
+		contentSequence := 0
+		result, err = strategy.ExecuteStream(ctx, execution, func(callCtx context.Context, e ContentEvent) error {
+			contentSequence++
+			e.RunID, e.Sequence = runID, contentSequence
+			copied, copyErr := cloneContent(e)
+			if copyErr != nil {
+				return copyErr
+			}
+			return content(callCtx, copied)
+		})
+	}
 	// Preserve the strategy error as well when cancellation races with its return.
 	if contextErr := ctx.Err(); contextErr != nil {
 		err = errors.Join(err, contextErr)

@@ -25,7 +25,7 @@ const (
 var ErrMaxSteps = errors.New("agent reached maximum model steps")
 
 // Result 即使失败也返回；History 是诊断快照，取消时可能有未解决调用。
-// Steps 计算已启动的 Generate 次数，Final 仅在正常完成时赋值。
+// Steps 计算已启动的 Generate/Stream 次数，Final 仅在正常完成时赋值。
 type Result struct {
 	History      []*msg.Msg
 	Final        *msg.Msg
@@ -80,6 +80,24 @@ func (a *ReAct) RunWithRequest(ctx context.Context, req RunRequest) (*Result, er
 
 // Execute implements the strategy contract. Applications normally use Runner.
 func (a *ReAct) Execute(ctx context.Context, req ExecutionRequest) (*Result, error) {
+	return a.execute(ctx, req, nil)
+}
+
+// ExecuteStream uses the same ReAct loop; only the model call changes.
+func (a *ReAct) ExecuteStream(ctx context.Context, req ExecutionRequest, consume func(context.Context, ContentEvent) error) (*Result, error) {
+	if consume == nil {
+		return &Result{}, fmt.Errorf("content consumer is required")
+	}
+	if a == nil {
+		return &Result{}, fmt.Errorf("agent is required")
+	}
+	if _, ok := a.model.(model.Streamer); !ok {
+		return &Result{}, ErrStreamUnsupported
+	}
+	return a.execute(ctx, req, consume)
+}
+
+func (a *ReAct) execute(ctx context.Context, req ExecutionRequest, consume func(context.Context, ContentEvent) error) (*Result, error) {
 	input := req.Messages
 	r := &Result{StopReason: Failed}
 	emit := func(e Event) {
@@ -143,7 +161,7 @@ func (a *ReAct) Execute(ctx context.Context, req ExecutionRequest) (*Result, err
 			return stop(err)
 		}
 		r.Steps++
-		response, generateErr := a.generate(ctx, model.Request{Messages: request, Tools: a.tools.Definitions()}, req.ModelTimeout)
+		response, generateErr := a.generate(ctx, model.Request{Messages: request, Tools: a.tools.Definitions()}, req.ModelTimeout, r.Steps, consume)
 		if err = ctx.Err(); err != nil {
 			return stop(err)
 		}
@@ -211,7 +229,7 @@ func (a *ReAct) Execute(ctx context.Context, req ExecutionRequest) (*Result, err
 	return r, ErrMaxSteps
 }
 
-func (a *ReAct) generate(ctx context.Context, req model.Request, timeout time.Duration) (*model.Response, error) {
+func (a *ReAct) generate(ctx context.Context, req model.Request, timeout time.Duration, step int, consume func(context.Context, ContentEvent) error) (*model.Response, error) {
 	var child context.Context
 	var cancel context.CancelFunc
 	if timeout > 0 {
@@ -223,7 +241,39 @@ func (a *ReAct) generate(ctx context.Context, req model.Request, timeout time.Du
 	if err := child.Err(); err != nil {
 		return nil, err
 	}
-	response, err := a.model.Generate(child, req)
+	var response *model.Response
+	var err error
+	if consume == nil {
+		response, err = a.model.Generate(child, req)
+	} else {
+		aggregate := msg.NewAggregator("assistant")
+		var callbackErr error
+		response, err = a.model.(model.Streamer).Stream(child, req, func(e msg.StreamEvent) error {
+			if callbackErr != nil {
+				return callbackErr
+			}
+			if callbackErr = child.Err(); callbackErr != nil {
+				return callbackErr
+			}
+			if callbackErr = aggregate.Apply(e); callbackErr != nil {
+				return callbackErr
+			}
+			callbackErr = consume(child, ContentEvent{Step: step, Event: e})
+			return callbackErr
+		})
+		if callbackErr != nil {
+			err = errors.Join(err, callbackErr)
+		}
+		if err == nil {
+			complete, finishErr := aggregate.Finish()
+			if finishErr != nil {
+				return nil, finishErr
+			}
+			if response == nil || response.Message == nil || !reflect.DeepEqual(complete.Blocks, response.Message.Blocks) {
+				return nil, fmt.Errorf("stream events do not match final message")
+			}
+		}
+	}
 	if child.Err() != nil {
 		return nil, child.Err()
 	}

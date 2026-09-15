@@ -59,3 +59,7 @@ go run ./cmd/agent-demo
 ### 统一 Runner
 
 `agent.NewRunner(strategy)` 接受实现 `agent.Agent` 的执行策略，统一运行 ID、总超时、事件和错误收尾。现有 ReAct.Run 仍可用。执行 `go run ./cmd/runner-demo` 对照两种策略的运行过程；示例无需 API key。
+
+### 端到端流式输出
+
+运行 `go run ./cmd/stream-demo` 查看“内容分片 → 工具执行 → 第二轮回答”。Runner.Stream 提供有界内容队列、提前关闭和完整结果读取；工具参数完整校验后才执行。详见 [流式接口与资源释放](agent/STREAMING.md)。
