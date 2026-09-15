@@ -33,6 +33,7 @@ type Result struct {
 	StopReason   StopReason
 	RunID        string
 	HookFailures int
+	ToolBatches  []*tool.BatchResult
 }
 
 type ReAct struct {
@@ -74,6 +75,7 @@ func (a *ReAct) Run(ctx context.Context, input []*msg.Msg) (*Result, error) {
 
 // RunWithRequest 为本次运行设置进度 Hook；原 Run 接口继续可用。
 func (a *ReAct) RunWithRequest(ctx context.Context, req RunRequest) (*Result, error) {
+	started := time.Now()
 	input := req.Messages
 	r := &Result{StopReason: Failed, RunID: msg.NewID()}
 	sequence := 0
@@ -108,6 +110,14 @@ func (a *ReAct) RunWithRequest(ctx context.Context, req RunRequest) (*Result, er
 	if a == nil || ctx == nil || a.model == nil || a.tools == nil || a.maxSteps <= 0 {
 		return stop(fmt.Errorf("agent and context are required"))
 	}
+	if req.Timeouts.Run < 0 || req.Timeouts.Model < 0 || req.Timeouts.Tool < 0 {
+		return stop(fmt.Errorf("timeouts must be nonnegative"))
+	}
+	if req.Timeouts.Run > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, started.Add(req.Timeouts.Run))
+		defer cancel()
+	}
 	if err := ctx.Err(); err != nil {
 		return stop(err)
 	}
@@ -139,7 +149,7 @@ func (a *ReAct) RunWithRequest(ctx context.Context, req RunRequest) (*Result, er
 			return stop(err)
 		}
 		r.Steps++
-		response, generateErr := a.model.Generate(ctx, model.Request{Messages: request, Tools: a.tools.Definitions()})
+		response, generateErr := a.generate(ctx, model.Request{Messages: request, Tools: a.tools.Definitions()}, req.Timeouts.Model)
 		if err = ctx.Err(); err != nil {
 			return stop(err)
 		}
@@ -178,17 +188,24 @@ func (a *ReAct) RunWithRequest(ctx context.Context, req RunRequest) (*Result, er
 		if err = ctx.Err(); err != nil {
 			return stop(err)
 		}
-		result, executeErr := a.tools.ExecuteWithObserver(ctx, assistant, func(p tool.Progress) {
+		result, executeErr := a.tools.ExecuteBatch(ctx, assistant, tool.BatchOptions{Timeout: req.Timeouts.Tool, Observer: func(p tool.Progress) {
 			eventType := ToolStarted
 			if p.Finished {
 				eventType = ToolFinished
 			}
 			emit(Event{Type: eventType, ToolCallID: p.CallID, ToolName: p.Name, Status: p.Status})
-		})
+		}})
+		r.ToolBatches = append(r.ToolBatches, result)
+		if result.Message != nil {
+			confirmed, copyErr := result.Message.Clone()
+			if copyErr != nil {
+				return stop(copyErr)
+			}
+			r.History = append(r.History, confirmed)
+		}
 		if executeErr != nil {
 			return stop(fmt.Errorf("tools: %w", executeErr))
 		}
-		r.History = append(r.History, result)
 		if err = msg.ValidateConversation(r.History, true); err != nil {
 			return stop(err)
 		}
@@ -198,4 +215,23 @@ func (a *ReAct) RunWithRequest(ctx context.Context, req RunRequest) (*Result, er
 	}
 	r.StopReason = MaxSteps
 	return r, ErrMaxSteps
+}
+
+func (a *ReAct) generate(ctx context.Context, req model.Request, timeout time.Duration) (*model.Response, error) {
+	var child context.Context
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		child, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		child, cancel = context.WithCancel(ctx)
+	}
+	defer cancel()
+	if err := child.Err(); err != nil {
+		return nil, err
+	}
+	response, err := a.model.Generate(child, req)
+	if child.Err() != nil {
+		return nil, child.Err()
+	}
+	return response, err
 }

@@ -59,80 +59,13 @@ func (r *Registry) Execute(ctx context.Context, request *msg.Msg) (*msg.Msg, err
 
 // ExecuteWithObserver 发出每项调用的值类型进度，观察者不能修改调用内容。
 func (r *Registry) ExecuteWithObserver(ctx context.Context, request *msg.Msg, observer func(Progress)) (*msg.Msg, error) {
-	if r == nil || ctx == nil {
-		return nil, fmt.Errorf("registry and context are required")
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	snapshot, err := request.Clone()
+	batch, err := r.ExecuteBatch(ctx, request, BatchOptions{Observer: observer})
 	if err != nil {
 		return nil, err
 	}
-	if snapshot.Role != msg.RoleAssistant {
-		return nil, fmt.Errorf("expected assistant message")
-	}
-	result := msg.New("tools", msg.RoleTool)
-	for _, b := range snapshot.Blocks {
-		if b.Type != msg.BlockToolUse {
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		call := b.ToolUse
-		report := func(finished bool, status string) {
-			reportProgress(observer, Progress{CallID: call.ID, Name: call.Name, Finished: finished, Status: status})
-		}
-		report(false, "started")
-		if err := ctx.Err(); err != nil {
-			report(true, "canceled")
-			return nil, err
-		}
-		t, ok := r.tools[call.Name]
-		var output []msg.Block
-		var callErr error
-		if !ok {
-			callErr = failure("unknown_tool", "tool is not registered")
-		} else {
-			output, callErr = invoke(ctx, t, call.Input)
-		}
-		if ctx.Err() != nil {
-			report(true, "canceled")
-			return nil, ctx.Err()
-		}
-		if cancellation(callErr) {
-			report(true, "canceled")
-			return nil, callErr
-		}
-		block := msg.ToolResult(call.ID, output...)
-		if callErr != nil {
-			code := "execution_failed"
-			message := "tool execution failed"
-			// 只透传包装器的可控错误，不将任意业务错误/堆栈泄露给模型。
-			if e, ok := callErr.(*Error); ok {
-				code = e.Code
-				message = e.Message
-			}
-			raw, _ := json.Marshal(map[string]string{"code": code, "message": message})
-			block = msg.ToolResult(call.ID, msg.Text(string(raw)))
-			block.ToolResult.IsError = true
-		}
-		result.Add(block)
-		status := "succeeded"
-		if callErr != nil {
-			status = "failed"
-		}
-		report(true, status)
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-	}
-	if len(result.Blocks) == 0 {
-		return nil, fmt.Errorf("no tool calls")
-	}
-	return result, result.Validate()
+	return batch.Message, nil
 }
+
 func invoke(ctx context.Context, t Tool, raw json.RawMessage) (out []msg.Block, err error) {
 	defer func() {
 		if recover() != nil {

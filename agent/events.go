@@ -36,7 +36,11 @@ type Event struct {
 // 需要中止运行时，调用方应使用 context；Hook 不是控制接口。
 type Hook func(Event) error
 
+// Timeouts are cooperative. Zero inherits the parent deadline.
+type Timeouts struct{ Run, Model, Tool time.Duration }
+
 type RunRequest struct {
+	Timeouts Timeouts
 	Messages []*msg.Msg
 	Hook     Hook
 }

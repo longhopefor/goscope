@@ -51,3 +51,7 @@ go run ./cmd/agent-demo
 ## Agent 执行进度
 
 `agent-demo` 现在实时打印模型和每个工具的开始、结束与运行终态。应用可通过 `RunWithRequest` 的 Hook 接收只读事件；原 Run 接口继续可用。详见 [进度接口说明](agent/README.md#执行进度)。
+
+### 取消与部分执行示例
+
+运行 `go run ./cmd/cancel-demo`：A 成功，B 写入临时文件后超时并标为 unknown，C 保持 not_started。示例结束清理临时文件。支持运行、模型、单次工具三级合作式超时；`Result.ToolBatches` 保留逐项状态，旧工具执行接口继续兼容。当前记录仅在内存中，不支持自动恢复或安全自动重试。

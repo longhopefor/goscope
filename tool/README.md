@@ -63,3 +63,9 @@ Demo 手动构造三次调用，执行真正的本地加法函数，并验证调
 `ExecuteWithObserver(ctx, request, func(Progress))` 在每个调用调度前和完成后同步通知。原 Execute 保持兼容。Progress 仅包含 CallID、Name、Finished 和 Status，无法修改工具参数或结果。Status 为 started、succeeded、failed 或 canceled；未知工具也发出 started/failed。
 
 观察者 panic 被隔离并继续执行；直接使用此底层 API 不记录观察者异常。需要失败计数时使用 Agent 的 Hook。观察者必须及时返回，context 不会强制终止阻塞回调。开始通知之后会再次检查取消，观察者取消运行可以阻止函数执行；完成通知之后也检查取消，避免启动下一项。取消不回滚已经发生的副作用。
+
+### 取消后的逐项结果
+
+需要保留部分结果时使用 `ExecuteBatch(ctx, request, tool.BatchOptions{Timeout: time.Second})`。返回的 `BatchResult.Calls` 按请求顺序记录 `succeeded`、`failed`、`unknown`、`not_started`；`Message` 只包含有确定返回结果的项，可能为 nil。取消时仍应读取 batch，并用 `errors.Is` 检查 error。
+
+`AttemptID` 表示进入 Tool.Call 边界，不证明业务函数执行，更不是持久化幂等键。`unknown` 不可直接自动重试，`failed` 也不证明没有副作用。旧 Execute/ExecuteWithObserver 保持取消返回 nil,error。超时要求工具响应 context，不能强制终止业务代码。

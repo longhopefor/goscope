@@ -70,3 +70,11 @@ result, err := a.RunWithRequest(ctx, agent.RunRequest{
 - Event 仅有值字段，不携带消息、参数、结果或错误对象，修改事件不会影响历史。Hook 捕获的其他共享对象不在隔离保证范围内；并发 Run 的 Hook 需要自行保护共享数据。
 - run_finished 是结果确定后的通知，在这个 Hook 中取消 context 不会追溯修改已确定的终态。
 - Demo 默认显示这些事件。这是步骤进度，不是模型逐字流式输出；没有百分比、Hooks 持久化或断点恢复。
+
+### 分层超时与部分执行
+
+`RunRequest.Timeouts` 支持 `agent.Timeouts{Run: time.Minute, Model: 20*time.Second, Tool: 5*time.Second}`。0 继承父时限，负值拒绝，更早的父 deadline 优先。模型和工具需合作处理 context，Hook 不应阻塞。
+
+失败时读取 `Result.ToolBatches` 获取逐项执行状态；History 保留已确认的工具输出，但可能仍有未解决调用，不能直接继续 Run。DeadlineExceeded 沿用 Canceled 停止原因，具体原因通过 errors.Is 判断。本次未加入自动重试或持久恢复。
+
+无需 API key 的验证：`go run ./cmd/cancel-demo`。
